@@ -196,6 +196,38 @@
   .entry-msg:empty { display: none; }
   .entry-msg.err { color: var(--danger-text); }
 
+  /* Überstunden-Ziel: nötiges Ende berechnen, solange das Ende noch offen ist */
+  .goal-btn {
+    width: 100%; margin-top: 10px; height: 44px; border-radius: 12px;
+    background: var(--accent-soft); color: var(--accent);
+    font-size: 15px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    transition: transform .15s ease;
+  }
+  .goal-btn:active { transform: scale(.985); }
+  .goal-btn svg { width: 17px; height: 17px; }
+  .goal-box { margin-top: 10px; border-radius: 14px; padding: 10px 12px 12px; background: var(--accent-soft); animation: fade .3s ease both; }
+  .goal-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .goal-chip {
+    display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 8px 0 12px; border-radius: 999px;
+    background: var(--card); color: var(--accent); font-size: 13px; font-weight: 600;
+    box-shadow: var(--input-ring); white-space: nowrap;
+  }
+  .goal-chip svg { width: 14px; height: 14px; }
+  .goal-clear { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: var(--text-2); flex: none; }
+  .goal-clear svg { width: 14px; height: 14px; }
+  .goal-main { display: flex; align-items: baseline; gap: 6px; margin-top: 10px; font-size: 15px; color: var(--text-2); padding-left: 2px; }
+  .goal-main strong { font-size: 30px; font-weight: 700; letter-spacing: -.025em; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .goal-sub { font-size: 13px; color: var(--text-2); margin-top: 2px; padding-left: 2px; font-variant-numeric: tabular-nums; }
+  .goal-note { font-size: 14px; line-height: 1.4; margin-top: 10px; padding-left: 2px; }
+  .goal-note.err { color: var(--danger-text); }
+  .goal-apply {
+    width: 100%; margin-top: 12px; height: 42px; border-radius: 12px;
+    background: var(--accent); color: #fff; font-size: 15px; font-weight: 600;
+    transition: transform .15s ease;
+  }
+  .goal-apply:active { transform: scale(.985); }
+
   /* Uhrzeit-Rad: schwebendes Glas-Panel unten – in Daumenreichweite */
   .pop-catch { position: fixed; inset: 0; z-index: 30; display: none; touch-action: none; }
   .pop-catch.show { display: block; }
@@ -248,6 +280,11 @@
     scroll-snap-align: center; user-select: none; -webkit-user-select: none;
   }
   .colon { position: relative; font-size: 22px; font-weight: 600; padding-bottom: 2px; }
+  /* Ziel-Modus: ein breites Rad statt Stunde/Minute */
+  #wheelG { width: 260px; display: none; }
+  .pop.goal #wheelG { display: block; }
+  .pop.goal #wheelH, .pop.goal #wheelM, .pop.goal .colon { display: none; }
+  .pop.goal #popNow { visibility: hidden; }
 
   /* Spruch */
   .quote {
@@ -361,6 +398,7 @@
     <div class="wheel" id="wheelH" tabindex="0" aria-label="Stunde"></div>
     <span class="colon">:</span>
     <div class="wheel" id="wheelM" tabindex="0" aria-label="Minute"></div>
+    <div class="wheel" id="wheelG" tabindex="0" aria-label="Überstunden-Ziel"></div>
   </div>
 </div>
 
@@ -377,6 +415,9 @@
   const root = document.documentElement;
 
   const ICON = {
+    target: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".6" fill="currentColor"/></svg>',
+    down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
     clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>',
     pause: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/></svg>',
@@ -394,7 +435,15 @@
 
   // Nur für den Moment: nichts wird gespeichert
   let nextId = 1;
-  const newEntry = () => ({ id: nextId++, st: '', et: '' });
+  const newEntry = () => ({ id: nextId++, st: '', et: '', goal: null });
+
+  // Wählbare Überstunden-Ziele in Minuten: ±0, 10–50 Min., dann 1 h bis 5 h in Halbstunden-Schritten
+  const GOALS = [0, 10, 20, 30, 40, 50, 60, 90, 120, 150, 180, 210, 240, 270, 300];
+  const goalLabel = (g) => {
+    if (!g) return '±0 (genau 8 h)';
+    if (g < 60) return `+${g} Min.`;
+    return `+${Math.floor(g / 60)} h${g % 60 ? ` ${g % 60} Min.` : ''}`;
+  };
   const state = { autoBreak: true, entries: [newEntry()] };
   let enterId = null;
 
@@ -492,6 +541,7 @@
           <div class="fcol"><span class="lbl">Ende</span>${timeBtn(en, 'et')}</div>
         </div>
         <div class="entry-msg" data-slot="msg"></div>
+        <div data-slot="goal"></div>
       </div>${i < n - 1 ? '<div class="gap" data-slot="gap"></div>' : ''}`).join('');
     enterId = null;
     refresh();
@@ -537,9 +587,13 @@
           ? `Überschneidet sich mit ${clash.map(label).join(' und ')}`
           : `Beginn liegt innerhalb von ${label(clash[0])}`;
       }
-      else if (inf.status === 'incomplete' && !(inf.missStart && inf.missEnd)) text = inf.missStart ? 'Beginn fehlt' : 'Ende fehlt';
+      else if (inf.status === 'incomplete' && inf.missStart && !inf.missEnd) text = 'Beginn fehlt';
       msg.className = `entry-msg ${cls}`;
       msg.textContent = text;
+
+      // Beginn steht, Ende noch offen: nötiges Ende für ein Überstunden-Ziel anbieten
+      const open = inf.status === 'incomplete' && !inf.missStart && inf.missEnd && !clash.length;
+      el.querySelector('[data-slot="goal"]').innerHTML = open ? goalHTML(i, infos) : '';
 
       const gapEl = el.nextElementSibling;
       if (gapEl && gapEl.classList.contains('gap')) {
@@ -550,6 +604,48 @@
     });
 
     renderResult(c);
+  }
+
+  // Frühestes Ende der offenen Arbeitszeit i, mit dem netto 8 h + Ziel erreicht werden.
+  // Rechnet alle übrigen Arbeitszeiten und die Pausenregel mit ein.
+  function goalEnd(i, infos) {
+    const en = state.entries[i];
+    const s = toMin(en.st);
+    const others = infos.filter((x, j) => j !== i);
+    const want = DAY_TARGET + en.goal;
+    if (calc(others).net >= want) return { done: true };
+    for (let e = s + 1; e <= 1439; e++) {
+      const c = calc([...others, { status: 'ok', s, e, dur: e - s }]);
+      if (c.net < want) continue;
+      const hit = infos.findIndex((o, j) => j !== i && o.status === 'ok' && s < o.e && o.s < e);
+      return { e, c, hit };
+    }
+    return null;
+  }
+
+  function goalHTML(i, infos) {
+    const en = state.entries[i];
+    if (en.goal == null) return `<button class="goal-btn">${ICON.target}Ende für Überstunden-Ziel berechnen</button>`;
+
+    const head = `<div class="goal-top"><button class="goal-chip" aria-label="Ziel ändern">Ziel ${goalLabel(en.goal)}${ICON.down}</button><button class="goal-clear" aria-label="Ziel entfernen">${ICON.close}</button></div>`;
+    const res = goalEnd(i, infos);
+    let body;
+    if (!res) body = '<p class="goal-note err">Heute nicht mehr erreichbar – dafür müsstest du über Mitternacht hinaus arbeiten.</p>';
+    else if (res.done) body = '<p class="goal-note">Mit den bisherigen Arbeitszeiten schon erreicht.</p>';
+    else if (res.hit >= 0) body = `<p class="goal-note err">Nicht möglich – dafür müsstest du in Arbeitszeit ${res.hit + 1} hineinarbeiten.</p>`;
+    else {
+      const s = toMin(en.st), now = nowMin();
+      const parts = [];
+      if (now >= s && now < res.e) parts.push(`noch ${fmtMin(res.e - now)}`);
+      else if (now >= res.e) parts.push('Uhrzeit schon erreicht');
+      else parts.push(`${fmtMin(res.e - s)} ab Beginn`);
+      if (res.c.deducted) parts.push(`inkl. ${res.c.deducted} Min. Pause`);
+      body = `
+        <div class="goal-main"><span>Arbeiten bis</span><strong>${clockStr(res.e)}</strong><span>Uhr</span></div>
+        <div class="goal-sub">${parts.join(' · ')}</div>
+        <button class="goal-apply" data-t="${clockStr(res.e)}">Als Ende übernehmen</button>`;
+    }
+    return `<div class="goal-box">${head}${body}</div>`;
   }
 
   function gapHTML(a, b, c) {
@@ -608,9 +704,18 @@
   entriesEl.addEventListener('click', (e) => {
     const tbtn = e.target.closest('.tbtn');
     if (tbtn) { openPicker(+tbtn.closest('.entry').dataset.id, tbtn.dataset.f, tbtn); return; }
-    const del = e.target.closest('.del');
-    if (!del) return;
-    const id = +del.closest('.entry').dataset.id;
+    const entryEl = e.target.closest('.entry');
+    if (!entryEl) return;
+    const id = +entryEl.dataset.id;
+    const en = state.entries.find((x) => x.id === id);
+
+    const goalBtn = e.target.closest('.goal-btn, .goal-chip');
+    if (goalBtn) { openGoalPicker(id); return; }
+    if (e.target.closest('.goal-clear')) { en.goal = null; refresh(); return; }
+    const apply = e.target.closest('.goal-apply');
+    if (apply) { en.et = apply.dataset.t; syncButtons(id); refresh(); return; }
+
+    if (!e.target.closest('.del')) return;
     state.entries = state.entries.filter((x) => x.id !== id);
     renderEntries();
   });
@@ -620,17 +725,17 @@
   const ITEM = 40;
   const pop = $('#pop'), popCatch = $('#popCatch'), appEl = $('.app');
   let padTimer = null;
-  const wheelH = $('#wheelH'), wheelM = $('#wheelM');
-  let picker = null; // { id, f, min, btn }
+  const wheelH = $('#wheelH'), wheelM = $('#wheelM'), wheelG = $('#wheelG');
+  let picker = null; // { id, f: 'st' | 'et' | 'goal', min, btn }
 
   const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
   const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
   const clockStr = (t) => `${pad(Math.floor(t / 60))}:${pad(t % 60)}`;
   const minuteList = (h) => (h === Math.floor(picker.min / 60) ? range(picker.min % 60, 59) : range(0, 59));
 
-  function buildWheel(el, values, selected) {
+  function buildWheel(el, values, selected, label = pad) {
     el._values = values;
-    el.innerHTML = `<div class="wpad"></div>${values.map((v) => `<div class="witem" data-v="${v}">${pad(v)}</div>`).join('')}<div class="wpad"></div>`;
+    el.innerHTML = `<div class="wpad"></div>${values.map((v) => `<div class="witem" data-v="${v}">${label(v)}</div>`).join('')}<div class="wpad"></div>`;
     setWheel(el, selected, false);
   }
   function setWheel(el, v, smooth) {
@@ -646,6 +751,13 @@
     if (!picker) return;
     const en = state.entries.find((x) => x.id === picker.id);
     if (!en) return;
+    if (picker.f === 'goal') {
+      en.goal = wheelValue(wheelG);
+      refresh();
+      const res = goalEnd(state.entries.indexOf(en), timeline());
+      $('#popHint').textContent = res && res.e && res.hit < 0 ? `Ende ${clockStr(res.e)} Uhr` : '';
+      return;
+    }
     const t = Math.max(picker.min, wheelValue(wheelH) * 60 + wheelValue(wheelM));
     en[picker.f] = clockStr(t);
     // Wird der Beginn hinter das Ende gelegt, muss das Ende neu gewählt werden
@@ -656,7 +768,7 @@
 
   function onSettle(el) {
     if (!picker) return;
-    if (el === wheelH) {
+    if (picker.f !== 'goal' && el === wheelH) {
       const list = minuteList(wheelValue(wheelH));
       if (list[0] !== wheelM._values[0]) buildWheel(wheelM, list, Math.max(wheelValue(wheelM), list[0]));
     }
@@ -681,6 +793,7 @@
     const h = Math.floor(cur / 60);
 
     clearTimeout(padTimer);
+    pop.classList.remove('goal');
     $('#popTitle').textContent = f === 'st' ? 'Beginn' : 'Ende';
     $('#popHint').textContent = min ? `ab ${clockStr(min)}` : '';
     btn.classList.add('active');
@@ -691,26 +804,44 @@
     buildWheel(wheelM, minuteList(h), cur % 60);
     applyPicker();
     wheelH.focus({ preventScroll: true });
-    keepAbovePanel(btn);
+    keepAbovePanel(id);
   }
 
-  // Das Panel sitzt unten in Daumenreichweite – das bearbeitete Feld wird darüber sichtbar gehalten
-  function keepAbovePanel(btn) {
+  // Dasselbe Glas-Panel, aber mit einem Rad für das Überstunden-Ziel
+  function openGoalPicker(id) {
+    const en = state.entries.find((x) => x.id === id);
+    if (!en) return;
+    picker = { id, f: 'goal', min: 0, btn: null };
+    clearTimeout(padTimer);
+    pop.classList.add('goal');
+    $('#popTitle').textContent = 'Überstunden-Ziel';
+    appEl.classList.add('picking');
+    pop.classList.add('show');
+    popCatch.classList.add('show');
+    buildWheel(wheelG, GOALS, en.goal ?? 0, goalLabel);
+    applyPicker();
+    wheelG.focus({ preventScroll: true });
+    keepAbovePanel(id);
+  }
+
+  // Das Panel sitzt unten in Daumenreichweite – die bearbeitete Arbeitszeit wird darüber sichtbar gehalten
+  function keepAbovePanel(id) {
+    const entryEl = entriesEl.querySelector(`.entry[data-id="${id}"]`);
+    if (!entryEl) return;
     const panelTop = window.innerHeight - parseFloat(getComputedStyle(pop).bottom) - pop.offsetHeight;
-    const r = btn.closest('.entry').getBoundingClientRect();
-    const overlap = r.bottom - (panelTop - 14);
+    const overlap = entryEl.getBoundingClientRect().bottom - (panelTop - 14);
     if (overlap > 0) window.scrollBy({ top: overlap, behavior: 'smooth' });
   }
 
   function closePicker() {
     if (!picker) return;
-    clearTimeout(wheelH._t); clearTimeout(wheelM._t);
-    onSettle(wheelH);
+    clearTimeout(wheelH._t); clearTimeout(wheelM._t); clearTimeout(wheelG._t);
+    if (picker.f === 'goal') applyPicker(); else onSettle(wheelH);
     const { id, f, btn } = picker;
     picker = null;
     pop.classList.remove('show');
     popCatch.classList.remove('show');
-    btn.classList.remove('active');
+    if (btn) btn.classList.remove('active');
     // Zusätzlichen Platz unten erst entfernen, nachdem ggf. sanft zurückgescrollt wurde
     appEl.classList.remove('picking');
     const excess = window.scrollY + window.innerHeight - document.documentElement.scrollHeight;
@@ -724,12 +855,17 @@
       renderEntries(true);
       const again = entriesEl.querySelector(`.entry[data-id="${id}"] [data-f="${f}"]`);
       if (again) again.focus({ preventScroll: true });
-    } else {
+    } else if (btn) {
       btn.focus({ preventScroll: true });
     }
   }
 
-  [wheelH, wheelM].forEach((el) => {
+  // Die Restzeit („noch …“) läuft mit der Uhr mit
+  setInterval(() => {
+    if (!picker && state.entries.some((x) => x.goal != null && x.st && !x.et)) refresh();
+  }, 20000);
+
+  [wheelH, wheelM, wheelG].forEach((el) => {
     el.addEventListener('scroll', () => {
       clearTimeout(el._t);
       el._t = setTimeout(() => onSettle(el), 110);
@@ -747,7 +883,7 @@
   });
 
   $('#popNow').addEventListener('click', () => {
-    if (!picker) return;
+    if (!picker || picker.f === 'goal') return;
     const t = Math.max(picker.min, nowMin());
     const h = Math.floor(t / 60);
     setWheel(wheelH, h, false);
