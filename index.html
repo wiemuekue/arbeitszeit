@@ -471,23 +471,44 @@
 
   function calc(infos) {
     const ok = infos.filter((i) => i.status === 'ok').sort((x, y) => x.s - y.s);
-    let gross = 0, gaps = 0, overlap = 0, cs = null, ce = null;
-    for (const i of ok) {
-      if (cs === null) { cs = i.s; ce = i.e; continue; }
-      if (i.s >= ce) { gross += ce - cs; gaps += i.s - ce; cs = i.s; ce = i.e; }
-      else { overlap += Math.min(i.e, ce) - i.s; ce = Math.max(ce, i.e); }
-    }
-    if (cs !== null) gross += ce - cs;
 
+    // Arbeitszeiten zusammenführen (Überschneidungen zählen nur einmal)
+    const merged = [];
+    let overlap = 0;
+    for (const i of ok) {
+      const last = merged[merged.length - 1];
+      if (last && i.s < last.e) { overlap += Math.min(i.e, last.e) - i.s; last.e = Math.max(last.e, i.e); }
+      else merged.push({ s: i.s, e: i.e });
+    }
+
+    // Unterbrechungen samt der Arbeitszeit, die bis dahin schon geleistet war
+    let gross = 0, gaps = 0;
+    const gapList = [];
+    merged.forEach((m, k) => {
+      if (k > 0) {
+        const len = m.s - merged[k - 1].e;
+        gaps += len;
+        gapList.push({ s: merged[k - 1].e, e: m.s, len, before: gross, credit: 0 });
+      }
+      gross += m.e - m.s;
+    });
+
+    // Länger als 6 h am Stück darf nicht gearbeitet werden: Eine Unterbrechung zählt nur als
+    // Ruhepause, wenn sie spätestens nach 6 h Arbeit beginnt. Spätere Pausen gleichen nichts aus.
     const required = gross > THRESHOLD ? BREAK_MIN : 0;
-    const credited = Math.min(gaps, required);
+    let credited = 0;
+    for (const g of gapList) {
+      if (g.before > THRESHOLD || credited >= required) continue;
+      g.credit = Math.min(g.len, required - credited);
+      credited += g.credit;
+    }
     const due = required - credited;
     const deducted = state.autoBreak ? due : 0;
     return {
       valid: ok.length,
       incomplete: infos.filter((i) => i.status === 'incomplete' && !(i.missStart && i.missEnd)).length,
       invalid: infos.filter((i) => i.status === 'invalid').length,
-      gross, gaps, overlap, required, credited, due, deducted,
+      gross, gaps, gapList, overlap, required, credited, due, deducted,
       net: gross - deducted,
       over: gross - deducted - DAY_TARGET
     };
@@ -653,7 +674,10 @@
     if (b.s >= a.e) {
       const g = b.s - a.e;
       if (!g) return { html: '', err: false };
-      const tag = c.required ? '<span class="tag ok">auf Pause angerechnet</span>' : '';
+      const info = c.gapList.find((x) => x.s === a.e && x.e === b.s);
+      let tag = '';
+      if (info && info.credit) tag = '<span class="tag ok">auf Pause angerechnet</span>';
+      else if (info && c.required && info.before > THRESHOLD) tag = '<span class="tag warn">nach über 6 h – zählt nicht</span>';
       return { html: `${ICON.pause}<span>Unterbrechung <b>${fmtMin(g)}</b></span>${tag}`, err: false };
     }
     if (b.s < a.e && a.s < b.e) {
