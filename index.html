@@ -282,9 +282,9 @@
   .colon { position: relative; font-size: 22px; font-weight: 600; padding-bottom: 2px; }
   /* Ziel-Modus: ein breites Rad statt Stunde/Minute */
   #wheelG { width: 260px; display: none; }
-  .pop.goal #wheelG { display: block; }
-  .pop.goal #wheelH, .pop.goal #wheelM, .pop.goal .colon { display: none; }
-  .pop.goal #popNow { visibility: hidden; }
+  .pop.single #wheelG { display: block; }
+  .pop.single #wheelH, .pop.single #wheelM, .pop.single .colon { display: none; }
+  .pop.single #popNow { visibility: hidden; }
 
   /* Spruch */
   .quote {
@@ -317,9 +317,14 @@
   .add-line svg { width: 15px; height: 15px; }
 
   /* Schalter */
-  .setting { margin-top: 18px; padding: 8px 10px 8px 16px; border-radius: 14px; background: var(--fill-2); }
-  .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; cursor: pointer; }
+  .setting { margin-top: 18px; padding: 0 10px 0 16px; border-radius: 14px; background: var(--fill-2); }
+  .setting > * + * { border-top: .5px solid var(--sep); }
+  .switch-row, .set-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 48px; padding: 8px 0; cursor: pointer; }
+  .set-row { width: 100%; text-align: left; padding-right: 4px; }
   .switch-title { font-size: 15px; font-weight: 500; color: var(--text-2); }
+  .set-val { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .set-sub { font-size: 13px; font-weight: 500; color: var(--text-2); }
+  .set-val svg { width: 14px; height: 14px; color: var(--text-3); }
   .switch {
     -webkit-appearance: none; appearance: none;
     width: 51px; height: 31px; border-radius: 999px; flex: none;
@@ -379,6 +384,10 @@
   <button class="quote" id="quote" aria-label="Neuer Spruch"></button>
 
   <section class="setting">
+    <button class="set-row" id="weekBtn" aria-label="Wochenarbeitszeit wählen">
+      <span class="switch-title">Wochenarbeitszeit</span>
+      <span class="set-val"><span class="set-sub" id="weekDay"></span><span id="weekVal"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg></span>
+    </button>
     <label class="switch-row">
       <span class="switch-title">Pausenzeiten einberechnen</span>
       <input type="checkbox" class="switch" id="autoBreak" checked>
@@ -408,7 +417,17 @@
 
   const BREAK_MIN = 30;   // gesetzliche Ruhepause (Maximum, keine 45-Min-Stufe)
   const THRESHOLD = 360;  // 6 h – Pause fällig, sobald überschritten
-  const DAY_TARGET = 480; // 8 h – alles darüber zählt als Überstunden
+  // Wochenarbeitszeit (5-Tage-Woche) bestimmt die tägliche Soll-Zeit – wird auf dem Gerät gemerkt
+  const WEEK_KEY = 'arbeitszeit.week';
+  const WEEK_DEFAULT = 40;
+  const WEEKS = Array.from({ length: 57 }, (_, i) => 20 + i / 2); // 20 h bis 48 h in halben Stunden
+  const loadWeek = () => {
+    try {
+      const v = parseFloat(localStorage.getItem(WEEK_KEY));
+      if (WEEKS.includes(v)) return v;
+    } catch (e) {}
+    return WEEK_DEFAULT;
+  };
   const FIRST_START = 450; // 07:30 – Startwert des Rads für den ersten Arbeitsbeginn
 
   const $ = (s) => document.querySelector(s);
@@ -440,11 +459,14 @@
   // Wählbare Überstunden-Ziele in Minuten: ±0, 10–50 Min., dann 1 h bis 5 h in Halbstunden-Schritten
   const GOALS = [0, 10, 20, 30, 40, 50, 60, 90, 120, 150, 180, 210, 240, 270, 300];
   const goalLabel = (g) => {
-    if (!g) return '±0 (genau 8 h)';
+    if (!g) return `±0 (genau ${fmtDay(dayTarget())})`;
     if (g < 60) return `+${g} Min.`;
     return `+${Math.floor(g / 60)} h${g % 60 ? ` ${g % 60} Min.` : ''}`;
   };
-  const state = { autoBreak: true, entries: [newEntry()] };
+  const state = { autoBreak: true, week: loadWeek(), entries: [newEntry()] };
+  const dayTarget = () => Math.round(state.week * 12); // Wochenstunden ÷ 5 Tage, in Minuten (40 h → 480)
+  const fmtDay = (min) => (min % 60 ? `${hm(min)} h` : `${min / 60} h`);
+  const weekLabel = (v) => `${String(v).replace('.', ',')} h`;
   let enterId = null;
 
   /* ---------- Berechnung ---------- */
@@ -510,7 +532,7 @@
       invalid: infos.filter((i) => i.status === 'invalid').length,
       gross, gaps, gapList, overlap, required, credited, due, deducted,
       net: gross - deducted,
-      over: gross - deducted - DAY_TARGET
+      over: gross - deducted - dayTarget()
     };
   }
 
@@ -633,7 +655,7 @@
     const en = state.entries[i];
     const s = toMin(en.st);
     const others = infos.filter((x, j) => j !== i);
-    const want = DAY_TARGET + en.goal;
+    const want = dayTarget() + en.goal;
     if (calc(others).net >= want) return { done: true };
     for (let e = s + 1; e <= 1439; e++) {
       const c = calc([...others, { status: 'ok', s, e, dur: e - s }]);
@@ -773,6 +795,11 @@
 
   function applyPicker() {
     if (!picker) return;
+    if (picker.f === 'week') {
+      setWeek(wheelValue(wheelG));
+      $('#popHint').textContent = `${fmtDay(dayTarget())} pro Tag`;
+      return;
+    }
     const en = state.entries.find((x) => x.id === picker.id);
     if (!en) return;
     if (picker.f === 'goal') {
@@ -792,7 +819,7 @@
 
   function onSettle(el) {
     if (!picker) return;
-    if (picker.f !== 'goal' && el === wheelH) {
+    if (!isSingle() && el === wheelH) {
       const list = minuteList(wheelValue(wheelH));
       if (list[0] !== wheelM._values[0]) buildWheel(wheelM, list, Math.max(wheelValue(wheelM), list[0]));
     }
@@ -817,7 +844,7 @@
     const h = Math.floor(cur / 60);
 
     clearTimeout(padTimer);
-    pop.classList.remove('goal');
+    pop.classList.remove('single');
     $('#popTitle').textContent = f === 'st' ? 'Beginn' : 'Ende';
     $('#popHint').textContent = min ? `ab ${clockStr(min)}` : '';
     btn.classList.add('active');
@@ -828,7 +855,7 @@
     buildWheel(wheelM, minuteList(h), cur % 60);
     applyPicker();
     wheelH.focus({ preventScroll: true });
-    keepAbovePanel(id);
+    keepAbovePanel(entriesEl.querySelector(`.entry[data-id="${id}"]`));
   }
 
   // Dasselbe Glas-Panel, aber mit einem Rad für das Überstunden-Ziel
@@ -836,31 +863,53 @@
     const en = state.entries.find((x) => x.id === id);
     if (!en) return;
     picker = { id, f: 'goal', min: 0, btn: null };
+    openSingle('Überstunden-Ziel', GOALS, en.goal ?? 0, goalLabel);
+    keepAbovePanel(entriesEl.querySelector(`.entry[data-id="${id}"]`));
+  }
+
+  // Wochenarbeitszeit wählen – bestimmt die tägliche Soll-Zeit für Über-/Minusstunden und Ziele
+  const weekBtn = $('#weekBtn');
+  function openWeekPicker() {
+    picker = { id: null, f: 'week', min: 0, btn: weekBtn };
+    openSingle('Wochenarbeitszeit', WEEKS, state.week, weekLabel);
+    keepAbovePanel(weekBtn);
+  }
+
+  function setWeek(v) {
+    state.week = v;
+    try { localStorage.setItem(WEEK_KEY, String(v)); } catch (e) {}
+    $('#weekVal').textContent = weekLabel(v);
+    $('#weekDay').textContent = `${fmtDay(dayTarget())} pro Tag`;
+    refresh();
+  }
+
+  const isSingle = () => picker && (picker.f === 'goal' || picker.f === 'week');
+
+  // Glas-Panel mit einem einzigen breiten Rad (Ziel oder Wochenstunden)
+  function openSingle(title, values, selected, label) {
     clearTimeout(padTimer);
-    pop.classList.add('goal');
-    $('#popTitle').textContent = 'Überstunden-Ziel';
+    pop.classList.add('single');
+    $('#popTitle').textContent = title;
     appEl.classList.add('picking');
     pop.classList.add('show');
     popCatch.classList.add('show');
-    buildWheel(wheelG, GOALS, en.goal ?? 0, goalLabel);
+    buildWheel(wheelG, values, selected, label);
     applyPicker();
     wheelG.focus({ preventScroll: true });
-    keepAbovePanel(id);
   }
 
-  // Das Panel sitzt unten in Daumenreichweite – die bearbeitete Arbeitszeit wird darüber sichtbar gehalten
-  function keepAbovePanel(id) {
-    const entryEl = entriesEl.querySelector(`.entry[data-id="${id}"]`);
-    if (!entryEl) return;
+  // Das Panel sitzt unten in Daumenreichweite – das bearbeitete Element wird darüber sichtbar gehalten
+  function keepAbovePanel(el) {
+    if (!el) return;
     const panelTop = window.innerHeight - parseFloat(getComputedStyle(pop).bottom) - pop.offsetHeight;
-    const overlap = entryEl.getBoundingClientRect().bottom - (panelTop - 14);
+    const overlap = el.getBoundingClientRect().bottom - (panelTop - 14);
     if (overlap > 0) window.scrollBy({ top: overlap, behavior: 'smooth' });
   }
 
   function closePicker() {
     if (!picker) return;
     clearTimeout(wheelH._t); clearTimeout(wheelM._t); clearTimeout(wheelG._t);
-    if (picker.f === 'goal') applyPicker(); else onSettle(wheelH);
+    if (isSingle()) applyPicker(); else onSettle(wheelH);
     const { id, f, btn } = picker;
     picker = null;
     pop.classList.remove('show');
@@ -907,7 +956,7 @@
   });
 
   $('#popNow').addEventListener('click', () => {
-    if (!picker || picker.f === 'goal') return;
+    if (!picker || isSingle()) return;
     const t = Math.max(picker.min, nowMin());
     const h = Math.floor(t / 60);
     setWheel(wheelH, h, false);
@@ -941,6 +990,8 @@
     state.entries = [newEntry()];
     renderEntries();
   });
+
+  weekBtn.addEventListener('click', openWeekPicker);
 
   const autoBreakEl = $('#autoBreak');
   autoBreakEl.addEventListener('change', () => { state.autoBreak = autoBreakEl.checked; refresh(); });
@@ -1125,6 +1176,8 @@
     quoteEl.classList.add('swap');
   });
 
+  $('#weekVal').textContent = weekLabel(state.week);
+  $('#weekDay').textContent = `${fmtDay(dayTarget())} pro Tag`;
   $('#greeting').textContent = greeting();
   showQuote();
   syncTheme();
